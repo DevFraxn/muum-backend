@@ -1,0 +1,5 @@
+node_modules/
+downloads/
+yt-dlp.exe
+ffmpeg.exe
+npm-debug.log*
