@@ -3,6 +3,7 @@ const cors = require('cors');
 const { exec, execFile, spawn } = require('child_process');
 const path = require('path');
 const fs = require('fs');
+const os = require('os');
 
 const app = express();
 app.use(cors());
@@ -18,6 +19,26 @@ const ytdlpPath = process.env.YT_DLP_PATH
     || (process.platform === 'win32' ? path.join(__dirname, 'yt-dlp.exe') : 'yt-dlp');
 const ffmpegPath = process.env.FFMPEG_PATH
     || (process.platform === 'win32' ? path.join(__dirname, 'ffmpeg.exe') : 'ffmpeg');
+const cookiesBase64 = process.env.YOUTUBE_COOKIES_BASE64;
+let youtubeCookiesPath = '';
+
+if (cookiesBase64) {
+    const cookieFile = Buffer.from(cookiesBase64, 'base64').toString('utf8');
+    if (!/^# (Netscape )?HTTP Cookie File/m.test(cookieFile)) {
+        throw new Error('YOUTUBE_COOKIES_BASE64 debe contener un archivo Netscape cookies.txt codificado en base64.');
+    }
+    youtubeCookiesPath = path.join(os.tmpdir(), `muum-youtube-cookies-${process.pid}.txt`);
+    fs.writeFileSync(youtubeCookiesPath, cookieFile, { mode: 0o600 });
+    process.on('exit', () => {
+        try {
+            fs.unlinkSync(youtubeCookiesPath);
+        } catch {
+            // El temporal puede haber sido eliminado previamente.
+        }
+    });
+}
+
+const ytDlpCookieArgs = youtubeCookiesPath ? ['--cookies', youtubeCookiesPath] : [];
 
 app.get('/health', (req, res) => res.json({ status: 'ok' }));
 
@@ -29,6 +50,7 @@ app.get('/api/search', (req, res) => {
 
     execFile(ytdlpPath, [
         '--js-runtimes', 'node',
+        ...ytDlpCookieArgs,
         `ytsearch${searchResultLimit}:${query} audio`,
         '--print', '%(id)s||%(title)s||%(uploader)s||%(duration_string)s||%(thumbnail)s'
     ], (error, stdout, stderr) => {
@@ -94,6 +116,7 @@ app.get('/api/stream', (req, res) => {
     videoUrl.searchParams.set('v', videoId);
     execFile(ytdlpPath, [
         '-f', 'bestaudio',
+        ...ytDlpCookieArgs,
         '-g', videoUrl.toString()
     ], async (error, stdout) => {
         if (error || !stdout.trim()) return res.status(500).send('Error al obtener stream');
@@ -143,6 +166,7 @@ app.get('/api/download', (req, res) => {
     execFile(ytdlpPath, [
         '--js-runtimes', 'node',
         '-x', '--audio-format', 'mp3',
+        ...ytDlpCookieArgs,
         '-o', filePath,
         videoUrl.toString()
     ], (err, stdout, stderr) => {
